@@ -359,7 +359,7 @@ docker compose -p browser-ai-relay --env-file /root/browser-ai-relay/deploy/ecs/
   ps
 ```
 
-如果旧容器显示 `Project=ecs`，新版部署会使用 `Project=browser-ai-relay`。首次迁移如果遇到容器名冲突，先确认目标是 browser-ai-relay 容器，再执行：
+如果旧容器显示 `Project=ecs`，新版部署会使用 `Project=browser-ai-relay`。部署脚本会在确认旧容器属于其他 Compose project 时自动移除旧的 `browser-ai-relay` 容器。如果仍然遇到容器名冲突，先确认目标是 browser-ai-relay 容器，再执行：
 
 ```bash
 docker rm -f browser-ai-relay

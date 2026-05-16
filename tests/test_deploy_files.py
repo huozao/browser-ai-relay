@@ -65,6 +65,14 @@ def test_deploy_scripts_use_explicit_compose_project_name():
             assert '-p "${COMPOSE_PROJECT_NAME:-browser-ai-relay}"' in text, path.name
 
 
+def test_deploy_script_migrates_old_compose_project_container():
+    deploy = (ROOT / "deploy/ecs/deploy.sh").read_text(encoding="utf-8")
+
+    assert "docker inspect browser-ai-relay" in deploy
+    assert 'existing_project" != "$COMPOSE_PROJECT_NAME"' in deploy
+    assert "docker rm -f browser-ai-relay" in deploy
+
+
 def test_entrypoint_warns_about_vnc_password_truncation():
     entrypoint = (ROOT / "docker/entrypoint.sh").read_text(encoding="utf-8")
 

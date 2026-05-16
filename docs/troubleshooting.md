@@ -136,7 +136,9 @@ curl -H "Authorization: Bearer 你的_API_TOKEN" \
 
 ## 从旧 Project=ecs 迁移
 
-旧版本可能创建了 `Project=ecs` 的 `browser-ai-relay` 容器。迁移到显式 `Project=browser-ai-relay` 时，如果部署报容器名冲突，可手动删除旧容器后重新部署：
+旧版本可能创建了 `Project=ecs` 的 `browser-ai-relay` 容器。新版部署脚本会在确认旧容器有不同的 Docker Compose project label 时自动移除旧的 `browser-ai-relay` 容器，再用 `Project=browser-ai-relay` 重建。
+
+如果仍然报容器名冲突，先确认目标确实是 browser-ai-relay 容器，再手动删除旧容器后重新部署：
 
 ```bash
 docker rm -f browser-ai-relay

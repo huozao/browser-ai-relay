@@ -131,6 +131,14 @@ echo "[部署] 拉取镜像 ${GHCR_BASE}/browser-ai-relay:${IMAGE_TAG}"
 "${compose[@]}" pull
 
 echo "[部署] 启动 browser-ai-relay"
+existing_project="$(docker inspect browser-ai-relay --format '{{ index .Config.Labels "com.docker.compose.project" }}' 2>/dev/null || true)"
+if [[ "$existing_project" == "<no value>" ]]; then
+  existing_project=""
+fi
+if [[ -n "$existing_project" && "$existing_project" != "$COMPOSE_PROJECT_NAME" ]]; then
+  echo "[部署] 发现旧 Compose project (${existing_project}) 的 browser-ai-relay 容器，迁移到 ${COMPOSE_PROJECT_NAME} 前先移除旧容器"
+  docker rm -f browser-ai-relay >/dev/null
+fi
 "${compose[@]}" up -d
 
 if "$ROOT_DIR/healthcheck.sh"; then
