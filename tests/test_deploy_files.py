@@ -29,8 +29,9 @@ def test_release_workflow_builds_and_deploys_browser_relay_image():
     assert "deploy/ecs/deploy.sh" in workflow
     assert "ECS_HOST" in workflow
     assert "ECS_SSH_KEY" in workflow
-    assert "Stashing ECS tracked local changes before sync" in workflow
-    assert 'git stash push -m "browser-ai-relay deploy backup ${TS}" -- .' in workflow
+    assert "Resetting tracked files to origin/main" in workflow
+    assert "git reset --hard origin/main" in workflow
+    assert "git pull --ff-only origin main" not in workflow
 
 
 def test_release_meta_example_documents_required_private_values():
