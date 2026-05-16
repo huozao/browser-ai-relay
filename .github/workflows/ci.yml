@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run pytest
+        run: pytest
+
+      - name: Shell syntax check
+        run: bash -n deploy/ecs/deploy.sh deploy/ecs/healthcheck.sh deploy/ecs/rollback.sh deploy/ecs/post-deploy-smoke.sh deploy/ecs/collect-diagnostics.sh
+
+      - name: Compose config check local
+        run: docker compose --env-file .env.example -f docker-compose.yml config >/dev/null
+
+      - name: Compose config check prod
+        run: docker compose --env-file deploy/ecs/runtime.env.example -f deploy/ecs/compose.prod.yml config >/dev/null
+
+      - name: Build Docker image
+        run: docker build -t browser-ai-relay:ci .

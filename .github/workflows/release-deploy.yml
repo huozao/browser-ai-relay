@@ -1,0 +1,166 @@
+name: release-deploy
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "V*"
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Planned release version, format VYYYYMMDDNNN"
+        required: false
+        type: string
+
+concurrency:
+  group: browser-ai-relay-release-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: vars
+        run: |
+          git fetch --tags --force
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            RELEASE_VERSION="${GITHUB_REF_NAME}"
+          elif [[ -n "${{ inputs.release_version }}" ]]; then
+            RELEASE_VERSION="${{ inputs.release_version }}"
+          else
+            YEAR="$(date -u +%Y)"
+            MONTH="$(date -u +%m)"
+            DAY="$(date -u +%d)"
+            SERIAL="$(printf '%03d' "$((GITHUB_RUN_NUMBER % 1000))")"
+            RELEASE_VERSION="V${YEAR}${MONTH}${DAY}${SERIAL}"
+            echo "No release_version was provided; generated ${RELEASE_VERSION}"
+          fi
+
+          if [[ ! "$RELEASE_VERSION" =~ ^V[0-9]{11}$ ]]; then
+            echo "Invalid release version. Expected VYYYYMMDDNNN, got: ${RELEASE_VERSION}" >&2
+            exit 1
+          fi
+
+          echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "## browser-ai-relay release"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Release version | ${RELEASE_VERSION} |"
+            echo "| Image | ghcr.io/${{ github.repository_owner }}/browser-ai-relay:${RELEASE_VERSION} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create and validate tag for manual dispatch
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          TAG: ${{ steps.vars.outputs.release_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}')"
+            CURRENT_SHA="$(git rev-parse HEAD)"
+            if [[ "$REMOTE_SHA" != "$CURRENT_SHA" ]]; then
+              echo "Tag already exists but does not point at this commit. Use a new release version." >&2
+              exit 1
+            fi
+          else
+            git tag -a "$TAG" -m "Release ${TAG}"
+            git push origin "$TAG"
+          fi
+
+      - name: Login to GHCR for push
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build and push browser-ai-relay
+        run: |
+          TAG="${{ steps.vars.outputs.release_version }}"
+          docker build -t ghcr.io/${{ github.repository_owner }}/browser-ai-relay:${TAG} .
+          docker push ghcr.io/${{ github.repository_owner }}/browser-ai-relay:${TAG}
+
+      - name: Deploy on ECS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          envs: GHCR_USERNAME,GHCR_TOKEN
+          script: |
+            set -euo pipefail
+
+            export GHCR_USERNAME="${GHCR_USERNAME:-}"
+            export GHCR_TOKEN="${GHCR_TOKEN:-}"
+
+            APP_ROOT="/root/browser-ai-relay"
+            BACKUP_DIR="/root/browser-ai-relay-private-backup/github-actions"
+            RELEASE_VERSION="${{ steps.vars.outputs.release_version }}"
+            TS="$(date +%Y%m%d-%H%M%S)"
+
+            if [[ ! -d "${APP_ROOT}/.git" ]]; then
+              echo "[deploy] Git repository not found at ${APP_ROOT}. Run the ECS bootstrap steps first." >&2
+              exit 1
+            fi
+
+            mkdir -p "${BACKUP_DIR}"
+            cd "${APP_ROOT}"
+
+            echo "[deploy] Backing up ECS private env files"
+            for env_file in deploy/ecs/release-meta.env deploy/ecs/runtime.env; do
+              if [[ -f "$env_file" ]]; then
+                cp -a "$env_file" "${BACKUP_DIR}/$(basename "$env_file").${TS}"
+              fi
+            done
+
+            echo "[deploy] Syncing ECS checkout to origin/main"
+            git fetch origin main --tags
+            git checkout main
+            git pull --ff-only origin main
+
+            echo "[deploy] Restoring ECS private env files"
+            if [[ -f "${BACKUP_DIR}/release-meta.env.${TS}" ]]; then
+              cp -a "${BACKUP_DIR}/release-meta.env.${TS}" deploy/ecs/release-meta.env
+              chmod 600 deploy/ecs/release-meta.env
+            fi
+            if [[ -f "${BACKUP_DIR}/runtime.env.${TS}" ]]; then
+              cp -a "${BACKUP_DIR}/runtime.env.${TS}" deploy/ecs/runtime.env
+              chmod 600 deploy/ecs/runtime.env
+            fi
+
+            chmod +x deploy/ecs/*.sh
+
+            echo "[deploy] Running deploy script"
+            deploy/ecs/deploy.sh "${RELEASE_VERSION}"
+
+            echo "[deploy] Running post-deploy smoke checks"
+            deploy/ecs/post-deploy-smoke.sh
+
+      - name: Collect ECS diagnostics on failure
+        if: ${{ failure() }}
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          script: |
+            set -uo pipefail
+            APP_ROOT="/root/browser-ai-relay"
+            DIAG_SCRIPT="${APP_ROOT}/deploy/ecs/collect-diagnostics.sh"
+            if [[ -x "${DIAG_SCRIPT}" ]]; then
+              "${DIAG_SCRIPT}"
+            else
+              echo "[diagnostics] collect-diagnostics.sh is not available or not executable"
+            fi
