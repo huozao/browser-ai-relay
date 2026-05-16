@@ -128,6 +128,10 @@ jobs:
             echo "[deploy] Syncing ECS checkout to origin/main"
             git fetch origin main --tags
             git checkout main
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              echo "[deploy] Stashing ECS tracked local changes before sync"
+              git stash push -m "browser-ai-relay deploy backup ${TS}" -- .
+            fi
             git pull --ff-only origin main
 
             echo "[deploy] Restoring ECS private env files"

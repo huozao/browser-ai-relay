@@ -62,6 +62,8 @@ com.docker.compose.project.config_files
 
 如果 `docker compose ps` 为空，但 `docker ps` 能看到 `browser-ai-relay`，说明你可能不在真实 compose project 下，或者 compose project name 不同。应以 `docker inspect` 的 compose labels 为准。
 
+GitHub Actions 自动部署时，ECS 上 `/root/browser-ai-relay` 应作为部署 checkout 使用，不建议手动修改 tracked 文件。新版 workflow 在同步 `origin/main` 前会把 tracked 本地修改保存到 git stash，避免 `git pull --ff-only` 被 `deploy/ecs/*.sh` 等本地改动阻塞。私有配置仍只应放在 ignored 文件里，例如 `deploy/ecs/release-meta.env`。
+
 新的生产部署脚本会显式使用：
 
 ```text
