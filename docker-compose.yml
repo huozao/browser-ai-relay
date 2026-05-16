@@ -1,3 +1,5 @@
+name: browser-ai-relay
+
 services:
   browser-ai-relay:
     build:
@@ -17,8 +19,8 @@ services:
       BROWSER_PROFILE_DIR: "/app/browser_data"
       DEBUG_DIR: "/app/logs/debug"
     ports:
-      - "${API_PORT:-8000}:8000"
-      - "${NOVNC_PORT:-6080}:6080"
+      - "${HOST_API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
+      - "${HOST_NOVNC_BIND:-127.0.0.1}:${NOVNC_PORT:-6080}:6080"
     volumes:
       - ./browser_data:/app/browser_data
       - ./logs:/app/logs

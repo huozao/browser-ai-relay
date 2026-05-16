@@ -49,7 +49,7 @@ ghcr.io/huozao/browser-ai-relay:VYYYYMMDDNNN
 /root/browser-ai-relay/deploy/ecs/deploy.sh <tag>
 ```
 
-7. `docker compose` 拉取 GHCR 镜像并启动服务。
+7. `docker compose -p browser-ai-relay` 拉取 GHCR 镜像并启动服务。
 8. 只检查 `/healthz` 和 `/browser-status`，不会自动调用 `/chat`。
 
 ## GitHub Secrets
@@ -120,11 +120,11 @@ chmod 600 deploy/ecs/release-meta.env
 chmod +x deploy/ecs/*.sh
 ```
 
-生成两个密码：
+生成 API token 和 VNC 密码：
 
 ```bash
 openssl rand -hex 32
-openssl rand -base64 24
+openssl rand -hex 4
 ```
 
 编辑：
@@ -139,7 +139,7 @@ nano deploy/ecs/release-meta.env
 GHCR_BASE=ghcr.io/huozao
 
 API_TOKEN=替换为 openssl rand -hex 32 生成的值
-VNC_PASSWORD=替换为 openssl rand -base64 24 生成的值
+VNC_PASSWORD=替换为 openssl rand -hex 4 生成的 8 位值
 
 HOST_API_BIND=127.0.0.1
 HOST_API_PORT=18000
@@ -158,6 +158,8 @@ GHCR_TOKEN=具有 read:packages 权限的 PAT
 
 不要提交真实的 `release-meta.env`。
 
+`API_TOKEN` 用于 HTTP API 的 `Authorization: Bearer xxx`；`VNC_PASSWORD` 用于 noVNC 登录。两者不能混用。`.env.example` 只是示例，不代表生产真实密码。VNC 协议认证常见限制是只使用前 8 位密码，生产 `VNC_PASSWORD` 建议保持 8 位以内。
+
 ## 首次手动部署验证
 
 第一次可以手动跑一次部署脚本，确认 ECS 侧没有环境问题。
@@ -172,7 +174,7 @@ deploy/ecs/deploy.sh V20260516001
 如果只是想先验证 compose 文件：
 
 ```bash
-docker compose --env-file deploy/ecs/runtime.env.example \
+docker compose -p browser-ai-relay --env-file deploy/ecs/runtime.env.example \
   -f deploy/ecs/compose.prod.yml \
   config
 ```
@@ -180,7 +182,7 @@ docker compose --env-file deploy/ecs/runtime.env.example \
 查看容器：
 
 ```bash
-docker compose --env-file deploy/ecs/runtime.env \
+docker compose -p browser-ai-relay --env-file deploy/ecs/runtime.env \
   -f deploy/ecs/compose.prod.yml \
   ps
 ```
@@ -202,13 +204,13 @@ curl -fsS http://127.0.0.1:18000/healthz
 从本地电脑建立 SSH 隧道：
 
 ```bash
-ssh -L 6080:localhost:6080 -L 18000:localhost:18000 root@你的ECS公网IP
+ssh -L 6080:127.0.0.1:6080 -L 18000:127.0.0.1:18000 root@你的ECS公网IP
 ```
 
 本地浏览器打开：
 
 ```text
-http://localhost:6080/vnc.html
+http://127.0.0.1:6080/vnc.html
 ```
 
 输入 `VNC_PASSWORD`，在 noVNC 里的 Chrome 手动登录 ChatGPT。
@@ -272,7 +274,7 @@ git commit -m "Add ECS auto deploy pipeline"
 git push -u origin main
 ```
 
-推送 `main` 后会触发 `.github/workflows/release-deploy.yml`：
+推送 `main` 后会触发 `.github/workflows/release-deploy.yml`，工作流名称是 `browser-ai-relay-release-deploy`：
 
 - 构建 GHCR 镜像。
 - SSH 到 ECS。
@@ -281,7 +283,7 @@ git push -u origin main
 - 运行 `deploy/ecs/deploy.sh`。
 - 运行 `deploy/ecs/post-deploy-smoke.sh`。
 
-也可以在 GitHub Actions 页面手动运行 `release-deploy`，输入版本号：
+也可以在 GitHub Actions 页面手动运行 `browser-ai-relay-release-deploy`，输入版本号：
 
 ```text
 V20260516001
@@ -346,16 +348,24 @@ git clone https://github.com/huozao/browser-ai-relay.git /root/browser-ai-relay
 确认 SSH 隧道还在：
 
 ```bash
-ssh -L 6080:localhost:6080 -L 18000:localhost:18000 root@你的ECS公网IP
+ssh -L 6080:127.0.0.1:6080 -L 18000:127.0.0.1:18000 root@你的ECS公网IP
 ```
 
 确认容器端口：
 
 ```bash
-docker compose --env-file /root/browser-ai-relay/deploy/ecs/runtime.env \
+docker compose -p browser-ai-relay --env-file /root/browser-ai-relay/deploy/ecs/runtime.env \
   -f /root/browser-ai-relay/deploy/ecs/compose.prod.yml \
   ps
 ```
+
+如果旧容器显示 `Project=ecs`，新版部署会使用 `Project=browser-ai-relay`。首次迁移如果遇到容器名冲突，先确认目标是 browser-ai-relay 容器，再执行：
+
+```bash
+docker rm -f browser-ai-relay
+```
+
+然后重跑部署。
 
 ### 登录失效
 
@@ -370,7 +380,7 @@ curl -X POST \
 ### 查看日志
 
 ```bash
-docker compose --env-file /root/browser-ai-relay/deploy/ecs/runtime.env \
+docker compose -p browser-ai-relay --env-file /root/browser-ai-relay/deploy/ecs/runtime.env \
   -f /root/browser-ai-relay/deploy/ecs/compose.prod.yml \
   logs --tail=200 browser-ai-relay
 ```

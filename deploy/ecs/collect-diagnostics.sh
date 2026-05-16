@@ -22,6 +22,7 @@ fi
 
 # shellcheck disable=SC1090
 source "$META_FILE"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-browser-ai-relay}"
 
 for name in GHCR_BASE COMPOSE_FILE RUNTIME_ENV_FILE API_TOKEN VNC_PASSWORD HOST_API_PORT HOST_NOVNC_PORT; do
   value="${!name:-}"
@@ -33,6 +34,6 @@ for name in GHCR_BASE COMPOSE_FILE RUNTIME_ENV_FILE API_TOKEN VNC_PASSWORD HOST_
 done
 
 if [[ -n "${COMPOSE_FILE:-}" && -n "${RUNTIME_ENV_FILE:-}" ]]; then
-  docker compose --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE" ps 2>&1 | redact || true
-  docker compose --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE" logs --tail=120 browser-ai-relay 2>&1 | redact || true
+  docker compose -p "${COMPOSE_PROJECT_NAME:-browser-ai-relay}" --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE" ps 2>&1 | redact || true
+  docker compose -p "${COMPOSE_PROJECT_NAME:-browser-ai-relay}" --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE" logs --tail=120 browser-ai-relay 2>&1 | redact || true
 fi

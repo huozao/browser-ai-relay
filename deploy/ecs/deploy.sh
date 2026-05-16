@@ -60,11 +60,16 @@ BEFORE_SEND_DELAY_MAX_MS="${BEFORE_SEND_DELAY_MAX_MS:-600}"
 TYPING_DELAY_MIN_MS="${TYPING_DELAY_MIN_MS:-0}"
 TYPING_DELAY_MAX_MS="${TYPING_DELAY_MAX_MS:-0}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-browser-ai-relay}"
 
 LOG_DIR="${DEPLOY_LOG_DIR:-$ROOT_DIR/logs}"
 mkdir -p "$LOG_DIR" "$METADATA_DIR" "$HOST_BROWSER_DATA_DIR" "$HOST_LOGS_DIR"
 LOG_FILE="$LOG_DIR/deploy-$(date +%Y%m%d).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
+
+if [[ "${#VNC_PASSWORD}" -gt 8 ]]; then
+  echo "WARNING: VNC_PASSWORD is longer than 8 chars; VNC authentication may only use the first 8 chars."
+fi
 
 CURRENT_ENV="$METADATA_DIR/current.env"
 PREVIOUS_ENV="$METADATA_DIR/previous.env"
@@ -109,6 +114,7 @@ BEFORE_SEND_DELAY_MAX_MS=${BEFORE_SEND_DELAY_MAX_MS}
 TYPING_DELAY_MIN_MS=${TYPING_DELAY_MIN_MS}
 TYPING_DELAY_MAX_MS=${TYPING_DELAY_MAX_MS}
 LOG_LEVEL=${LOG_LEVEL}
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
 ENV
 
 cp "$CURRENT_ENV" "$RUNTIME_ENV_FILE"
@@ -119,7 +125,7 @@ if [[ -n "${GHCR_USERNAME:-}" && -n "${GHCR_TOKEN:-}" ]]; then
   echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 fi
 
-compose=(docker compose --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE")
+compose=(docker compose -p "${COMPOSE_PROJECT_NAME:-browser-ai-relay}" --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE")
 
 echo "[部署] 拉取镜像 ${GHCR_BASE}/browser-ai-relay:${IMAGE_TAG}"
 "${compose[@]}" pull
@@ -128,6 +134,16 @@ echo "[部署] 启动 browser-ai-relay"
 "${compose[@]}" up -d
 
 if "$ROOT_DIR/healthcheck.sh"; then
+  echo "[部署] 摘要"
+  echo "Project: browser-ai-relay"
+  echo "Compose project: ${COMPOSE_PROJECT_NAME}"
+  echo "Path: /root/browser-ai-relay"
+  echo "noVNC: ${HOST_NOVNC_BIND}:${HOST_NOVNC_PORT}"
+  echo "API: ${HOST_API_BIND}:${HOST_API_PORT}"
+  echo "SSH tunnel:"
+  echo "  ssh -L 6080:127.0.0.1:6080 -L 18000:127.0.0.1:18000 root@ECS_IP"
+  echo "VNC_PASSWORD source: release-meta.env or runtime env"
+  echo "API_TOKEN source: release-meta.env or runtime env"
   echo "[部署] 成功"
   exit 0
 fi

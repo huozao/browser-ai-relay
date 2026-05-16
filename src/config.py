@@ -12,7 +12,7 @@ class Settings:
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_token: str = ""
-    vnc_password: str = "change-me"
+    vnc_password: str = "changeme"
     novnc_port: int = 6080
     browser_profile_dir: Path = Path("browser_data")
     debug_dir: Path = Path("logs/debug")
@@ -50,7 +50,7 @@ def get_settings() -> Settings:
         api_host=_get("API_HOST", "0.0.0.0", env),
         api_port=int(_get("API_PORT", "8000", env)),
         api_token=_get("API_TOKEN", "", env),
-        vnc_password=_get("VNC_PASSWORD", "change-me", env),
+        vnc_password=_get("VNC_PASSWORD", "changeme", env),
         novnc_port=int(_get("NOVNC_PORT", "6080", env)),
         browser_profile_dir=_path_from_env(_get("BROWSER_PROFILE_DIR", "browser_data", env)),
         debug_dir=_path_from_env(_get("DEBUG_DIR", "logs/debug", env)),

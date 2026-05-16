@@ -17,7 +17,8 @@ source "$META_FILE"
 : "${HEALTHCHECK_URL:?Please set HEALTHCHECK_URL in release-meta.env}"
 : "${API_TOKEN:?Please set API_TOKEN in release-meta.env}"
 
-compose=(docker compose --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE")
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-browser-ai-relay}"
+compose=(docker compose -p "${COMPOSE_PROJECT_NAME:-browser-ai-relay}" --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE")
 
 if ! "${compose[@]}" config --services | grep -Fxq "browser-ai-relay"; then
   echo "[post-deploy] Missing compose service: browser-ai-relay" >&2

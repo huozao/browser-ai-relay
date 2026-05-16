@@ -15,6 +15,7 @@ source "$META_FILE"
 : "${COMPOSE_FILE:?请在 release-meta.env 设置 COMPOSE_FILE}"
 : "${RUNTIME_ENV_FILE:?请在 release-meta.env 设置 RUNTIME_ENV_FILE}"
 : "${METADATA_DIR:?请在 release-meta.env 设置 METADATA_DIR}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-browser-ai-relay}"
 
 PREVIOUS_ENV="$METADATA_DIR/previous.env"
 if [[ ! -f "$PREVIOUS_ENV" ]]; then
@@ -25,5 +26,5 @@ fi
 cp "$PREVIOUS_ENV" "$RUNTIME_ENV_FILE"
 chmod 600 "$RUNTIME_ENV_FILE"
 
-docker compose --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE" up -d
+docker compose -p "${COMPOSE_PROJECT_NAME:-browser-ai-relay}" --env-file "$RUNTIME_ENV_FILE" -f "$COMPOSE_FILE" up -d
 echo "[回滚] 已切回 previous.env"

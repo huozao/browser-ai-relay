@@ -1,4 +1,4 @@
-name: release-deploy
+name: browser-ai-relay-release-deploy
 
 on:
   push:

@@ -1,3 +1,5 @@
+name: browser-ai-relay
+
 services:
   browser-ai-relay:
     image: ${BROWSER_AI_RELAY_IMAGE}
