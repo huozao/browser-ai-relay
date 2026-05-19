@@ -217,6 +217,124 @@ Invoke-RestMethod -Uri http://localhost:8000/v1/chat/completions `
   -Body $body
 ```
 
+## 作为 OpenClaw 本地 provider 使用
+
+`browser-ai-relay` 可以作为 OpenAI-compatible provider 给 OpenClaw 调用。主路径不变：先让 ECS 容器里的普通 Chrome 常驻运行，通过 noVNC 手动登录 ChatGPT，再由 API 附加同一个 Chrome 页面。
+
+使用前确认：
+
+1. 必须先在 noVNC 中手动登录 ChatGPT。
+2. 登录后可以先 `POST /browser/attach`，也可以让 `/v1/chat/completions` 在首次请求时自动 attach 一次。
+3. OpenClaw 的 provider `baseUrl` 使用：
+
+```text
+http://host.docker.internal:18000/v1
+```
+
+4. `apiKey` 填 `browser-ai-relay` 的 `API_TOKEN`。
+5. `model` 填 `browser-chatgpt`。
+
+OpenClaw 配置示例：
+
+```json
+{
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "browser-ai-relay": {
+        "baseUrl": "http://host.docker.internal:18000/v1",
+        "apiKey": "这里填 browser-ai-relay 的 API_TOKEN",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "browser-chatgpt",
+            "name": "Browser ChatGPT Relay",
+            "reasoning": false,
+            "input": ["text"],
+            "contextWindow": 16000,
+            "maxTokens": 2000,
+            "compat": {
+              "requiresStringContent": true,
+              "supportsTools": false
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+端口边界：
+
+- ECS 宿主机上的 API 通常只绑定 `127.0.0.1:18000`。
+- OpenClaw 容器访问宿主机服务时使用 `host.docker.internal:18000`。
+- noVNC 继续通过 SSH 隧道访问。
+- 阿里云安全组不要开放 `18000`、`18789`、`18790`、`6080`。
+
+测试命令：
+
+```bash
+curl -s http://127.0.0.1:18000/healthz
+```
+
+```bash
+curl -s http://127.0.0.1:18000/v1/models \
+  -H "Authorization: Bearer $API_TOKEN" | jq
+```
+
+```bash
+curl -s http://127.0.0.1:18000/v1/chat/completions \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "browser-chatgpt",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，用一句话回复我"
+      }
+    ],
+    "stream": false
+  }' | jq
+```
+
+带 OpenClaw metadata：
+
+```bash
+curl -s http://127.0.0.1:18000/v1/chat/completions \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "browser-chatgpt",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Conversation info (untrusted metadata):\n```json\n{\"chat_id\":\"xxx\",\"message_id\":\"yyy\"}\n```\n\n测试桥接"
+      }
+    ],
+    "stream": false
+  }' | jq
+```
+
+`stream=true`：
+
+```bash
+curl -N http://127.0.0.1:18000/v1/chat/completions \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "browser-chatgpt",
+    "messages": [
+      {
+        "role": "user",
+        "content": "测试 stream"
+      }
+    ],
+    "stream": true
+  }'
+```
+
 ## Debug 文件
 
 `/chat` 失败时会在 `logs/debug/时间戳/` 下保存：

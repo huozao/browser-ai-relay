@@ -1,62 +1,51 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.browser.chatgpt_page import ChatGPTPage
 from src.models.request_models import ChatRequest, OpenAIChatCompletionRequest
-from src.models.response_models import build_openai_response
+from src.models.response_models import build_openai_models_response, build_openai_response, build_openai_sse_events
 from src.utils.errors import ErrorCode, RelayError, error_response
 
 router = APIRouter()
 
+_OPENCLAW_METADATA_RE = re.compile(
+    r"\AConversation info \(untrusted metadata\):\s*```json\s*.*?```\s*",
+    flags=re.DOTALL,
+)
+
 
 @router.post("/chat")
 async def chat(request: Request, body: ChatRequest) -> JSONResponse:
-    browser = request.app.state.browser
-    if not browser.started or browser.page is None:
-        return JSONResponse(
-            status_code=503,
-            content=error_response(
-                ErrorCode.BROWSER_NOT_STARTED,
-                "Browser is not attached. Open noVNC, sign in manually, then POST /browser/attach.",
-            ),
-        )
-
-    lock: asyncio.Lock = request.app.state.chat_lock
-    if lock.locked():
-        return JSONResponse(
-            status_code=429,
-            content=error_response(ErrorCode.BUSY, "Browser is processing another request."),
-        )
-
-    async with lock:
-        try:
-            answer, duration = await ChatGPTPage(browser.page).ask(body.message)
-            return JSONResponse(content={"ok": True, "answer": answer, "duration_seconds": duration})
-        except RelayError as exc:
-            browser.last_error = f"{exc.code.value}: {exc.message}"
-            status_code = _status_code_for_error(exc.code)
-            return JSONResponse(
-                status_code=status_code,
-                content=error_response(exc.code, exc.message, exc.debug_dir),
-            )
+    result = await _ask_browser(request, body.message)
+    if isinstance(result, JSONResponse):
+        return result
+    answer, duration = result
+    return JSONResponse(content={"ok": True, "answer": answer, "duration_seconds": duration})
 
 
-@router.post("/v1/chat/completions")
-async def openai_chat_completions(request: Request, body: OpenAIChatCompletionRequest) -> dict[str, Any]:
-    if body.stream:
-        raise HTTPException(
-            status_code=400,
-            detail=error_response(ErrorCode.SELECTOR_FAILED, "stream is not supported in browser-ai-relay."),
-        )
+@router.get("/v1/models")
+async def openai_models() -> dict[str, Any]:
+    return build_openai_models_response()
+
+
+@router.post("/v1/chat/completions", response_model=None)
+async def openai_chat_completions(
+    request: Request, body: OpenAIChatCompletionRequest
+) -> dict[str, Any] | StreamingResponse:
     if body.tools or body.tool_choice:
         raise HTTPException(
             status_code=400,
-            detail=error_response(ErrorCode.SELECTOR_FAILED, "tools and tool_choice are not supported."),
+            detail=error_response(
+                ErrorCode.SELECTOR_FAILED,
+                "browser-ai-relay does not support tools/tool_choice. Disable tools for this provider.",
+            ),
         )
 
     prompt = build_prompt_from_messages([msg.model_dump() for msg in body.messages])
@@ -66,14 +55,18 @@ async def openai_chat_completions(request: Request, body: OpenAIChatCompletionRe
             detail=error_response(ErrorCode.RESPONSE_EMPTY, "No text user message found in messages."),
         )
 
-    chat_response = await chat(request, ChatRequest(message=prompt))
-    if chat_response.status_code >= 400:
-        raise HTTPException(status_code=chat_response.status_code, detail=chat_response.body.decode("utf-8"))
+    result = await _ask_browser(request, prompt)
+    if isinstance(result, JSONResponse):
+        raise HTTPException(status_code=result.status_code, detail=json.loads(result.body))
 
-    import json
-
-    payload = json.loads(chat_response.body)
-    return build_openai_response(body.model, payload["answer"], prompt)
+    answer, _duration = result
+    if body.stream:
+        return StreamingResponse(
+            iter(build_openai_sse_events(body.model, answer)),
+            media_type="text/event-stream; charset=utf-8",
+            headers={"Cache-Control": "no-cache"},
+        )
+    return build_openai_response(body.model, answer, prompt)
 
 
 def build_prompt_from_messages(messages: list[dict[str, Any]]) -> str:
@@ -94,8 +87,14 @@ def build_prompt_from_messages(messages: list[dict[str, Any]]) -> str:
         return ""
 
     prefix = "\n\n".join(system_parts).strip()
-    user_text = user_parts[-1].strip()
+    user_text = clean_openclaw_metadata(user_parts[-1]).strip()
     return f"{prefix}\n\n{user_text}".strip() if prefix else user_text
+
+
+def clean_openclaw_metadata(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    return _OPENCLAW_METADATA_RE.sub("", text).strip()
 
 
 def _content_to_text(content: Any) -> str:
@@ -120,6 +119,59 @@ def _content_to_text(content: Any) -> str:
                 )
         return "\n".join(part for part in parts if part)
     return str(content).strip()
+
+
+async def _ask_browser(request: Request, message: str) -> tuple[str, float] | JSONResponse:
+    browser = request.app.state.browser
+    attach_error = await _ensure_browser_ready(browser)
+    if attach_error:
+        return attach_error
+
+    lock: asyncio.Lock = request.app.state.chat_lock
+    if lock.locked():
+        return JSONResponse(
+            status_code=429,
+            content=error_response(ErrorCode.BUSY, "Browser is processing another request."),
+        )
+
+    async with lock:
+        try:
+            return await ChatGPTPage(browser.page).ask(message)
+        except RelayError as exc:
+            browser.last_error = f"{exc.code.value}: {exc.message}"
+            status_code = _status_code_for_error(exc.code)
+            return JSONResponse(
+                status_code=status_code,
+                content=error_response(exc.code, exc.message, exc.debug_dir),
+            )
+
+
+async def _ensure_browser_ready(browser: Any) -> JSONResponse | None:
+    if browser.started and browser.page is not None:
+        return None
+
+    try:
+        await browser.start()
+    except Exception as exc:
+        browser.last_error = str(exc)
+        return JSONResponse(
+            status_code=503,
+            content=error_response(
+                ErrorCode.BROWSER_NOT_STARTED,
+                f"Chrome not running or CDP attach failed: {exc}. Make sure Chrome is running in noVNC, then retry.",
+            ),
+        )
+
+    if not browser.started or browser.page is None:
+        return JSONResponse(
+            status_code=503,
+            content=error_response(
+                ErrorCode.BROWSER_NOT_STARTED,
+                "Browser attach did not produce a page. Make sure Chrome is running in noVNC, then retry.",
+            ),
+        )
+    browser.last_error = None
+    return None
 
 
 def _status_code_for_error(code: ErrorCode) -> int:

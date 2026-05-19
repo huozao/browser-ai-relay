@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import json
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -68,3 +69,41 @@ def build_openai_response(model: str, answer: str, prompt: str) -> dict[str, Any
         ),
     )
     return response.model_dump()
+
+
+def build_openai_models_response() -> dict[str, Any]:
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "browser-chatgpt",
+                "object": "model",
+                "created": 0,
+                "owned_by": "browser-ai-relay",
+            }
+        ],
+    }
+
+
+def build_openai_sse_events(model: str, answer: str) -> list[str]:
+    completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+    created = int(time.time())
+    content_chunk = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": {"content": answer}, "finish_reason": None}],
+    }
+    stop_chunk = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    }
+    return [
+        f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n",
+        f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n",
+        "data: [DONE]\n\n",
+    ]
